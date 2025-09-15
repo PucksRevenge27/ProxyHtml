@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Proxy</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      /* Default theme (Purple) */
+      --bg-primary: #000;
+      --bg-secondary: #1a001a;
+      --bg-tertiary: #2a0033;
+      --bg-quaternary: #3a0044;
+      --bg-accent: #4a0055;
+      --text-primary: #d0f;
+      --text-secondary: #d0f9;
+      --border-primary: #d0f;
+      --border-secondary: rgba(221, 0, 255, 0.3);
+      --border-tertiary: #d0f3;
+      --accent-primary: #ff00ff;
+      --accent-secondary: #d0f;
+      --shadow-primary: rgba(221, 0, 255, 0.5);
+      --shadow-secondary: rgba(221, 0, 255, 0.3);
+      --shadow-tertiary: rgba(221, 0, 255, 0.2);
+      --error-color: #f00;
+      --warning-color: #ff0;
+      --info-color: #0ff;
+      --success-color: #0f0;
+      --transition-speed: 0.3s;
+    }
+
+    * {
+      box-sizing: border-box;
+      transition: background-color var(--transition-speed) ease,
+        color var(--transition-speed) ease, border-color var(--transition-speed) ease,
+        box-shadow var(--transition-speed) ease;
+    }
+
+    body {
+      margin: 0;
+      font-family: monospace;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+    }
+
+    /* Loading animation */
+    @keyframes pulse {
+      0% {
+        opacity: 0.6;
+      }
+
+      50% {
+        opacity: 1;
+      }
+
+      100% {
+        opacity: 0.6;
+      }
+    }
+
+    @keyframes slideInFromTop {
+      from {
+        transform: translateY(-100%);
+        opacity: 0;
+      }
+
+      to {
+        transform: translateY(0);
+        opacity: 1;
+      }
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+      }
+
+      to {
+        opacity: 1;
+      }
+    }
+
+    @keyframes glow {
+      0% {
+        box-shadow: 0 0 5px var(--accent-secondary);
+      }
+
+      50% {
+        box-shadow: 0 0 20px var(--accent-secondary);
+      }
+
+      100% {
+        box-shadow: 0 0 5px var(--accent-secondary);
+      }
+    }
+
+    #controls {
+      padding: 0.5rem 1rem;
+      background: var(--bg-secondary);
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+      animation: slideInFromTop 0.3s ease-out;
+    }
+
+    input {
+      flex: 1;
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      font-size: 1rem;
+      padding: 0.5rem 0.75rem;
+      border: 1px solid var(--border-primary);
+      border-radius: 4px;
+    }
+
+    input:focus {
+      outline: none;
+      box-shadow: 0 0 10px var(--shadow-primary);
+      border-color: var(--accent-primary);
+    }
+
+    input::placeholder {
+      color: var(--text-secondary);
+    }
+
+    button {
+      background: rgba(0, 0, 0, 0);
+      color: var(--text-primary);
+      border: 1px solid rgba(0, 0, 0, 0);
+      padding: 0.5rem 1rem;
+      font-size: 1rem;
+      border-radius: 4px;
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    button svg {
+      width: 100%;
+      height: 100%;
+      max-width: 24px;
+      max-height: 24px;
+      object-fit: contain;
+    }
+
+    button:hover {
+      background: var(--bg-accent);
+      transform: translateY(-2px);
+      box-shadow: 0 4px 8px var(--shadow-secondary);
+    }
+
+    button:active {
+      transform: scale(0.95);
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
+    #tab-bar {
+      display: flex;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-primary);
+      overflow-x: auto;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border-primary) var(--bg-secondary);
+      animation: slideInFromTop 0.4s ease-out;
+      scroll-behavior: smooth;
+    }
+
+    #tab-bar::-webkit-scrollbar {
+      height: 5px;
+    }
+
+    #tab-bar::-webkit-scrollbar-thumb {
+      background-color: var(--border-primary);
+    }
+
+    #tab-bar::-webkit-scrollbar-track {
+      background-color: var(--bg-secondary);
+    }
+
+    .tab {
+      padding: 0.5rem 1rem;
+      background: var(--bg-tertiary);
+      border: 1px solid rgba(0, 0, 0, 0);
+      border-radius: 20% 20% 0% 0%;
+      cursor: pointer;
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      max-width: 200px;
+      min-width: 100px;
+      transform: translateY(0);
+    }
+
+    .tab.active {
+      background: var(--bg-quaternary);
+      border: 1px solid var(--border-secondary);
+      transform: translateY(-2px);
+      box-shadow: 0 2px 10px var(--shadow-secondary);
+    }
+
+    .tab:hover:not(.active) {
+      background: var(--bg-accent);
+      transform: translateY(-1px);
+    }
+
+    .tab-title {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      flex: 1;
+    }
+
+    .tab-close {
+      font-size: 1.2rem;
+      line-height: 1;
+      padding: 0.2rem;
+      border-radius: 50%;
+    }
+
+    .tab-close:hover {
+      color: var(--text-primary);
+      background: var(--bg-accent);
+      transform: scale(1.1);
+    }
+
+    #new-tab {
+      padding: 0.5rem 1rem;
+      background: rgba(42, 0, 51, 0);
+      cursor: pointer;
+      font-size: 1.2rem;
+      border-radius: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 40px;
+    }
+
+    #new-tab:hover {
+      background: var(--bg-tertiary);
+      transform: scale(1.1);
+      animation: glow 2s infinite;
+    }
+
+    #content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .iframe-container {
+      flex: 1;
+      display: none;
+      opacity: 0;
+    }
+
+    .iframe-container.active {
+      display: block;
+      opacity: 1;
+    }
+
+    .iframe-container.loading {
+      opacity: 0.7;
+    }
+
+    iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+      background: var(--bg-primary);
+    }
+
+    #iframe-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: var(--bg-primary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      text-align: center;
+      animation: fadeIn 0.3s ease-out;
+      z-index: 10;
+    }
+
+    #iframe-overlay p {
+      max-width: 60%;
+      margin-bottom: 1rem;
+      color: var(--text-secondary);
+    }
+
+    #iframe-overlay-logo {
+      width: 100px;
+      height: 100px;
+      margin-bottom: 1.5rem;
+      animation: pulse 2s infinite;
+      color: var(--accent-primary);
+    }
+
+    #loading-indicator {
+      display: none;
+      position: fixed;
+      bottom: 1rem;
+      left: 1rem;
+      background: var(--bg-accent);
+      color: var(--text-primary);
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      box-shadow: 0 4px 10px var(--shadow-tertiary);
+      animation: fadeIn 0.3s ease-out;
+      z-index: 20;
+    }
+
+    .loading-text::after {
+      content: '...';
+      animation: pulse 1s infinite;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="controls">
+    <button id="back-button" disabled>
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M19 12H5M12 19l-7-7 7-7" />
+      </svg>
+    </button>
+    <button id="forward-button" disabled>
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M5 12h14M12 5l7 7-7 7" />
+      </svg>
+    </button>
+    <form id="proxy-form" style="display: contents;">
+      <input type="url" id="target-url" placeholder="Enter URL or search..." required />
+      <button type="submit" id="go-button">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5 12h14M12 5l7 7-7 7" />
+        </svg>
+      </button>
+    </form>
+  </div>
+  <div id="tab-bar">
+    <button id="new-tab">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="12" y1="5" x2="12" y2="19" />
+        <line x1="5" y1="12" x2="19" y2="12" />
+      </svg>
+    </button>
+  </div>
+  <div id="content">
+    <div id="iframe-overlay">
+      <svg id="iframe-overlay-logo" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2L2 7l10 5 10-5-10-5z" />
+        <path d="M2 17l10 5 10-5" />
+        <path d="M2 12l10 5 10-5" />
+      </svg>
+      <h1>Proxy</h1>
+      <p>A simple client-side web proxy using allOrigins.</p>
+    </div>
+  </div>
+  <div id="loading-indicator">
+    <span class="loading-text">Loading</span>
+  </div>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const targetUrlInput = document.getElementById('target-url');
+      const proxyForm = document.getElementById('proxy-form');
+      const content = document.getElementById('content');
+      const iframeOverlay = document.getElementById('iframe-overlay');
+      const loadingIndicator = document.getElementById('loading-indicator');
+      const tabBar = document.getElementById('tab-bar');
+      const newTabButton = document.getElementById('new-tab');
+      const backButton = document.getElementById('back-button');
+      const forwardButton = document.getElementById('forward-button');
+
+      let tabs = [];
+      let activeTabIndex = -1;
+
+      // Function to create and add a new tab and its content
+      function addTab(url = '') {
+        const tabId = `tab-${Date.now()}`;
+        const tabElement = document.createElement('div');
+        tabElement.className = 'tab';
+        tabElement.dataset.tabId = tabId;
+        tabElement.innerHTML = `
+          <span class="tab-title">New Tab</span>
+          <span class="tab-close">&times;</span>
+        `;
+        tabBar.insertBefore(tabElement, newTabButton);
+
+        const iframeContainer = document.createElement('div');
+        iframeContainer.className = 'iframe-container';
+        iframeContainer.dataset.tabId = tabId;
+        iframeContainer.innerHTML = `<iframe src="about:blank" sandbox="allow-same-origin allow-scripts allow-forms"></iframe>`;
+        content.appendChild(iframeContainer);
+
+        const newTab = {
+          id: tabId,
+          url: url,
+          iframeContainer: iframeContainer,
+          tabElement: tabElement,
+          history: []
+        };
+
+        tabs.push(newTab);
+        activateTab(tabs.length - 1);
+
+        if (url) {
+          loadUrlInTab(newTab, url);
+        } else {
+          showOverlay(newTab);
+        }
+
+        tabElement.addEventListener('click', (e) => {
+          if (!e.target.classList.contains('tab-close')) {
+            const index = tabs.findIndex(t => t.id === tabId);
+            if (index !== -1) {
+              activateTab(index);
+            }
+          }
+        });
+
+        tabElement.querySelector('.tab-close').addEventListener('click', (e) => {
+          e.stopPropagation();
+          closeTab(tabId);
+        });
+
+        tabBar.scrollLeft = tabBar.scrollWidth;
+      }
+
+      // Function to activate a specific tab
+      function activateTab(index) {
+        if (activeTabIndex !== -1 && tabs[activeTabIndex]) {
+          tabs[activeTabIndex].tabElement.classList.remove('active');
+          tabs[activeTabIndex].iframeContainer.classList.remove('active');
+        }
+
+        activeTabIndex = index;
+        if (activeTabIndex !== -1 && tabs[activeTabIndex]) {
+          tabs[activeTabIndex].tabElement.classList.add('active');
+          tabs[activeTabIndex].iframeContainer.classList.add('active');
+          targetUrlInput.value = tabs[activeTabIndex].url;
+          updateNavigationButtons();
+          hideOverlay();
+        } else {
+          showOverlay();
+        }
+      }
+
+      // Function to close a tab
+      function closeTab(tabId) {
+        const index = tabs.findIndex(t => t.id === tabId);
+        if (index === -1) return;
+
+        const tab = tabs[index];
+        tab.tabElement.remove();
+        tab.iframeContainer.remove();
+        tabs.splice(index, 1);
+
+        if (tabs.length === 0) {
+          addTab();
+        } else {
+          const newActiveIndex = Math.min(index, tabs.length - 1);
+          activateTab(newActiveIndex);
+        }
+      }
+
+      // Function to load a URL into a specific tab
+      async function loadUrlInTab(tab, url) {
+        const normalizedUrl = normalizeUrl(url);
+        if (!normalizedUrl) {
+          displayError(tab, 'Invalid URL or search query.');
+          return;
+        }
+
+        const allOriginsUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(normalizedUrl)}`;
+        const iframe = tab.iframeContainer.querySelector('iframe');
+        const originalUrl = normalizedUrl;
+
+        tab.url = originalUrl;
+        targetUrlInput.value = originalUrl;
+        tab.iframeContainer.classList.add('loading');
+        loadingIndicator.style.display = 'block';
+
+        const historyIndex = tab.history.indexOf(originalUrl);
+        if (historyIndex > -1) {
+          tab.history.splice(historyIndex + 1);
+        } else {
+          tab.history.push(originalUrl);
+        }
+        updateNavigationButtons();
+        updateTabTitle(tab, 'Loading...');
+
+        try {
+          const response = await fetch(allOriginsUrl);
+          if (!response.ok) {
+            throw new Error('Network response was not ok');
+          }
+          const htmlContent = await response.text();
+
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(htmlContent, 'text/html');
+          
+          // Rewrite all links and resources to go through the proxy
+          rewriteUrls(doc, originalUrl);
+
+          // Handle form submissions to redirect through the proxy
+          const newScript = doc.createElement('script');
+          newScript.textContent = `
+            document.querySelectorAll('form').forEach(form => {
+              form.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const formData = new FormData(form);
+                const action = new URL(form.action, window.location.href);
+                const params = new URLSearchParams(formData);
+                let newUrl = action.href;
+                if (form.method.toLowerCase() === 'get') {
+                  newUrl += '?' + params.toString();
+                }
+                window.parent.postMessage({ type: 'navigate', url: newUrl }, '*');
+              });
+            });
+            
+            // Add a click handler to intercept links and redirect
+            document.addEventListener('click', (e) => {
+              let target = e.target;
+              while (target && target.tagName !== 'A') {
+                target = target.parentElement;
+              }
+              if (target && target.href) {
+                e.preventDefault();
+                window.parent.postMessage({ type: 'navigate', url: target.href }, '*');
+              }
+            });
+          `;
+          doc.body.appendChild(newScript);
+
+          iframe.srcdoc = doc.documentElement.outerHTML;
+
+          iframe.onload = () => {
+            tab.iframeContainer.classList.remove('loading');
+            loadingIndicator.style.display = 'none';
+            updateTabTitle(tab, iframe.contentDocument.title || originalUrl);
+            hideOverlay();
+          };
+
+          iframe.onerror = () => {
+            displayError(tab, 'Failed to load content into iframe.');
+            hideOverlay();
+          };
+
+        } catch (error) {
+          console.error('Fetch error:', error);
+          displayError(tab, 'Error fetching content. It might be due to CORS or AllOrigins limitations.');
+          hideOverlay();
+        }
+      }
+
+      // Function to rewrite URLs in the DOM document
+      function rewriteUrls(doc, baseUrl) {
+        const base = new URL(baseUrl);
+
+        // Function to rewrite a single attribute
+        const rewriteAttribute = (element, attr) => {
+          const originalUrl = element.getAttribute(attr);
+          if (originalUrl && !originalUrl.startsWith('data:') && !originalUrl.startsWith('#')) {
+            try {
+              const absoluteUrl = new URL(originalUrl, base).href;
+              element.setAttribute(attr, `https://api.allorigins.win/raw?url=${encodeURIComponent(absoluteUrl)}`);
+            } catch (e) {
+              console.warn(`Could not rewrite URL for ${element.tagName} with attribute ${attr}: ${e}`);
+            }
+          }
+        };
+
+        // Rewrite all common URL attributes
+        doc.querySelectorAll('[src]').forEach(el => rewriteAttribute(el, 'src'));
+        doc.querySelectorAll('[href]').forEach(el => rewriteAttribute(el, 'href'));
+        doc.querySelectorAll('[srcset]').forEach(el => {
+          const newSrcset = el.srcset.split(',').map(part => {
+            const [url, size] = part.trim().split(/\s+/);
+            if (url) {
+              try {
+                const absoluteUrl = new URL(url, base).href;
+                return `https://api.allorigins.win/raw?url=${encodeURIComponent(absoluteUrl)} ${size}`;
+              } catch (e) {
+                console.warn(`Could not rewrite URL in srcset: ${e}`);
+                return part;
+              }
+            }
+            return part;
+          }).join(', ');
+          el.srcset = newSrcset;
+        });
+      }
+
+      // Function to normalize user input into a valid URL
+      function normalizeUrl(input) {
+        if (!input) return null;
+        try {
+          const url = new URL(input.startsWith('http') ? input : `https://${input}`);
+          return url.href;
+        } catch (e) {
+          return `https://www.google.com/search?q=${encodeURIComponent(input)}`;
+        }
+      }
+
+      // Update the title of a tab
+      function updateTabTitle(tab, title) {
+        tab.tabElement.querySelector('.tab-title').textContent = title;
+      }
+
+      // Update the enabled/disabled state of navigation buttons
+      function updateNavigationButtons() {
+        if (activeTabIndex === -1 || !tabs[activeTabIndex]) {
+          backButton.disabled = true;
+          forwardButton.disabled = true;
+          return;
+        }
+        const tab = tabs[activeTabIndex];
+        const currentIndex = tab.history.indexOf(tab.url);
+        backButton.disabled = currentIndex <= 0;
+        forwardButton.disabled = currentIndex >= tab.history.length - 1;
+      }
+
+      // Display an error message within the iframe
+      function displayError(tab, message) {
+        const iframe = tab.iframeContainer.querySelector('iframe');
+        iframe.srcdoc = `
+          <body style="background: var(--bg-primary); color: var(--error-color); text-align: center; padding-top: 50px;">
+            <h1>Error</h1>
+            <p>${message}</p>
+          </body>
+        `;
+        tab.iframeContainer.classList.remove('loading');
+        loadingIndicator.style.display = 'none';
+        updateTabTitle(tab, 'Error');
+      }
+
+      // Show the main overlay
+      function showOverlay() {
+        if (iframeOverlay) {
+          iframeOverlay.style.display = 'flex';
+        }
+      }
+
+      // Hide the main overlay
+      function hideOverlay() {
+        if (iframeOverlay) {
+          iframeOverlay.style.display = 'none';
+        }
+      }
+      
+      // Handle messages from iframes to navigate
+      window.addEventListener('message', (event) => {
+        if (event.data.type === 'navigate' && activeTabIndex !== -1) {
+          loadUrlInTab(tabs[activeTabIndex], event.data.url);
+        }
+      }, false);
+
+      // Event Listeners
+      proxyForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const url = targetUrlInput.value;
+        if (activeTabIndex !== -1 && tabs[activeTabIndex]) {
+          loadUrlInTab(tabs[activeTabIndex], url);
+        } else {
+          addTab(url);
+        }
+      });
+
+      newTabButton.addEventListener('click', () => addTab());
+
+      backButton.addEventListener('click', () => {
+        if (activeTabIndex === -1 || !tabs[activeTabIndex]) return;
+        const tab = tabs[activeTabIndex];
+        const currentIndex = tab.history.indexOf(tab.url);
+        if (currentIndex > 0) {
+          const prevUrl = tab.history[currentIndex - 1];
+          loadUrlInTab(tab, prevUrl);
+        }
+      });
+
+      forwardButton.addEventListener('click', () => {
+        if (activeTabIndex === -1 || !tabs[activeTabIndex]) return;
+        const tab = tabs[activeTabIndex];
+        const currentIndex = tab.history.indexOf(tab.url);
+        if (currentIndex < tab.history.length - 1) {
+          const nextUrl = tab.history[currentIndex + 1];
+          loadUrlInTab(tab, nextUrl);
+        }
+      });
+
+      // Initial state
+      if (tabs.length === 0) {
+        addTab();
+      }
+    });
+  </script>
+</body>
+</html>
