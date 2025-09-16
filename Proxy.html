@@ -412,7 +412,7 @@
         const iframeContainer = document.createElement('div');
         iframeContainer.className = 'iframe-container';
         iframeContainer.dataset.tabId = tabId;
-        iframeContainer.innerHTML = `<iframe src="about:blank" sandbox="allow-same-origin allow-scripts allow-forms"></iframe>`;
+        iframeContainer.innerHTML = `<iframe src="about:blank" sandbox="allow-same-origin allow-scripts allow-forms allow-pointer-lock allow-modals allow-orientation-lock allow-presentation"></iframe>`;
         content.appendChild(iframeContainer);
 
         const newTab = {
@@ -486,6 +486,88 @@
         }
       }
 
+      // Centralized proxy service management
+      class ProxyManager {
+        constructor() {
+          this.services = [
+            {
+              name: 'AllOrigins',
+              url: 'https://api.allorigins.win/raw?url=',
+              encode: true,
+              healthy: true
+            },
+            {
+              name: 'CorsAnywhere', 
+              url: 'https://cors-anywhere.herokuapp.com/',
+              encode: false,
+              healthy: true
+            },
+            {
+              name: 'CodeTabs',
+              url: 'https://api.codetabs.com/v1/proxy?quest=',
+              encode: true,
+              healthy: true
+            }
+          ];
+          this.currentServiceIndex = 0;
+        }
+
+        getProxiedUrl(targetUrl, baseUrl = null) {
+          try {
+            const absoluteUrl = baseUrl ? new URL(targetUrl, baseUrl).href : new URL(targetUrl).href;
+            const service = this.services[this.currentServiceIndex];
+            
+            if (service.encode) {
+              return service.url + encodeURIComponent(absoluteUrl);
+            } else {
+              return service.url + absoluteUrl;
+            }
+          } catch (e) {
+            console.warn(`Could not create proxied URL for: ${targetUrl}`, e);
+            return targetUrl;
+          }
+        }
+
+        async fetchThroughProxy(url, options = {}) {
+          let lastError = null;
+
+          for (let i = 0; i < this.services.length; i++) {
+            const serviceIndex = (this.currentServiceIndex + i) % this.services.length;
+            const service = this.services[serviceIndex];
+            
+            if (!service.healthy) continue;
+
+            try {
+              const proxyUrl = service.encode ? 
+                service.url + encodeURIComponent(url) : 
+                service.url + url;
+              
+              const response = await fetch(proxyUrl, options);
+              if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+              }
+              
+              this.currentServiceIndex = serviceIndex;
+              return response;
+            } catch (error) {
+              console.warn(`Proxy service ${service.name} failed:`, error);
+              service.healthy = false;
+              setTimeout(() => { service.healthy = true; }, 30000); // Re-enable after 30s
+              lastError = error;
+              continue;
+            }
+          }
+
+          throw lastError || new Error('All proxy services failed');
+        }
+
+        isAlreadyProxied(url) {
+          return this.services.some(service => url.includes(service.url.split('?')[0]));
+        }
+      }
+
+      const proxyManager = new ProxyManager();
+
       // Function to load a URL into a specific tab
       async function loadUrlInTab(tab, url) {
         const normalizedUrl = normalizeUrl(url);
@@ -494,7 +576,6 @@
           return;
         }
 
-        const allOriginsUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(normalizedUrl)}`;
         const iframe = tab.iframeContainer.querySelector('iframe');
         const originalUrl = normalizedUrl;
 
@@ -513,46 +594,209 @@
         updateTabTitle(tab, 'Loading...');
 
         try {
-          const response = await fetch(allOriginsUrl);
-          if (!response.ok) {
-            throw new Error('Network response was not ok');
-          }
+          const response = await proxyManager.fetchThroughProxy(normalizedUrl);
           const htmlContent = await response.text();
 
           const parser = new DOMParser();
           const doc = parser.parseFromString(htmlContent, 'text/html');
           
-          // Rewrite all links and resources to go through the proxy
-          rewriteUrls(doc, originalUrl);
+          // Comprehensive URL rewriting for recursive proxy
+          await rewriteUrls(doc, originalUrl);
 
-          // Handle form submissions to redirect through the proxy
+          // Add base tag for proper URL resolution
+          const baseTag = doc.createElement('base');
+          baseTag.href = originalUrl;
+          if (doc.head) {
+            doc.head.insertBefore(baseTag, doc.head.firstChild);
+          }
+
+          // Enhanced script injection optimized for games
           const newScript = doc.createElement('script');
           newScript.textContent = `
+            // Store original base URL for relative URL resolution
+            window.PROXY_BASE_URL = "${originalUrl}";
+            
+            // Non-intrusive proxy URL generation
+            function getProxiedUrl(url) {
+              // Don't proxy blob, data, or already proxied URLs
+              if (url.startsWith('blob:') || url.startsWith('data:') || 
+                  url.includes('api.allorigins.win') || url.includes('cors-anywhere.herokuapp.com') || 
+                  url.includes('api.codetabs.com')) {
+                return url;
+              }
+              
+              try {
+                const absoluteUrl = new URL(url, window.PROXY_BASE_URL).href;
+                return 'https://api.allorigins.win/raw?url=' + encodeURIComponent(absoluteUrl);
+              } catch (e) {
+                return url;
+              }
+            }
+            
+            // Game-friendly fetch override with proper relative URL handling
+            const originalFetch = window.fetch;
+            window.fetch = function(input, init) {
+              let url = input;
+              if (input instanceof Request) {
+                url = input.url;
+              }
+              
+              if (typeof url === 'string') {
+                // Handle relative URLs by resolving against base
+                if (!url.startsWith('http') && !url.startsWith('data:') && !url.startsWith('blob:')) {
+                  url = new URL(url, window.PROXY_BASE_URL).href;
+                }
+                
+                // Proxy external URLs
+                if (url.startsWith('http') || url.startsWith('//')) {
+                  const proxyUrl = getProxiedUrl(url);
+                  if (input instanceof Request) {
+                    return originalFetch(new Request(proxyUrl, input), init);
+                  }
+                  return originalFetch(proxyUrl, init);
+                }
+              }
+              return originalFetch(input, init);
+            };
+
+            // Enhanced XMLHttpRequest override with relative URL support
+            const originalXHROpen = XMLHttpRequest.prototype.open;
+            XMLHttpRequest.prototype.open = function(method, url, ...args) {
+              if (typeof url === 'string') {
+                // Handle relative URLs
+                if (!url.startsWith('http') && !url.startsWith('data:') && !url.startsWith('blob:')) {
+                  url = new URL(url, window.PROXY_BASE_URL).href;
+                }
+                
+                if (url.startsWith('http') || url.startsWith('//')) {
+                  url = getProxiedUrl(url);
+                }
+              }
+              return originalXHROpen.call(this, method, url, ...args);
+            };
+
+            // Game-specific optimizations
+            
+            // Preserve localStorage and sessionStorage for game saves
+            // (These work automatically in the sandbox)
+            
+            // Comprehensive dynamic asset loading interception for games
+            
+            // Override property setters for various elements
+            ['HTMLImageElement', 'HTMLScriptElement', 'HTMLLinkElement', 'HTMLAudioElement', 'HTMLVideoElement'].forEach(elementType => {
+              if (window[elementType]) {
+                const srcDescriptor = Object.getOwnPropertyDescriptor(window[elementType].prototype, 'src');
+                const hrefDescriptor = Object.getOwnPropertyDescriptor(window[elementType].prototype, 'href');
+                
+                if (srcDescriptor && srcDescriptor.set) {
+                  Object.defineProperty(window[elementType].prototype, 'src', {
+                    get: srcDescriptor.get,
+                    set: function(value) {
+                      if (typeof value === 'string' && !value.startsWith('data:') && !value.startsWith('blob:')) {
+                        if (!value.startsWith('http')) {
+                          value = new URL(value, window.PROXY_BASE_URL).href;
+                        }
+                        if (value.startsWith('http')) {
+                          value = getProxiedUrl(value);
+                        }
+                      }
+                      srcDescriptor.set.call(this, value);
+                    }
+                  });
+                }
+                
+                if (hrefDescriptor && hrefDescriptor.set) {
+                  Object.defineProperty(window[elementType].prototype, 'href', {
+                    get: hrefDescriptor.get,
+                    set: function(value) {
+                      if (typeof value === 'string' && !value.startsWith('data:') && !value.startsWith('blob:')) {
+                        if (!value.startsWith('http')) {
+                          value = new URL(value, window.PROXY_BASE_URL).href;
+                        }
+                        if (value.startsWith('http')) {
+                          value = getProxiedUrl(value);
+                        }
+                      }
+                      hrefDescriptor.set.call(this, value);
+                    }
+                  });
+                }
+              }
+            });
+            
+            // Enhanced setAttribute override
+            const originalSetAttribute = Element.prototype.setAttribute;
+            Element.prototype.setAttribute = function(name, value) {
+              if ((name === 'src' || name === 'href') && typeof value === 'string' && !value.startsWith('data:') && !value.startsWith('blob:')) {
+                if (!value.startsWith('http')) {
+                  value = new URL(value, window.PROXY_BASE_URL).href;
+                }
+                if (value.startsWith('http')) {
+                  value = getProxiedUrl(value);
+                }
+              }
+              return originalSetAttribute.call(this, name, value);
+            };
+
+            // Handle form submissions with POST support
             document.querySelectorAll('form').forEach(form => {
               form.addEventListener('submit', (e) => {
                 e.preventDefault();
                 const formData = new FormData(form);
-                const action = new URL(form.action, window.location.href);
-                const params = new URLSearchParams(formData);
-                let newUrl = action.href;
+                const action = new URL(form.action || window.location.href, window.PROXY_BASE_URL);
+                
                 if (form.method.toLowerCase() === 'get') {
-                  newUrl += '?' + params.toString();
+                  const params = new URLSearchParams(formData);
+                  const newUrl = action.href + (action.href.includes('?') ? '&' : '?') + params.toString();
+                  window.parent.postMessage({ type: 'navigate', url: newUrl }, '*');
+                } else {
+                  // POST forms - notify parent with form data
+                  window.parent.postMessage({ 
+                    type: 'form_submit', 
+                    url: action.href, 
+                    method: form.method,
+                    formData: Object.fromEntries(formData)
+                  }, '*');
                 }
-                window.parent.postMessage({ type: 'navigate', url: newUrl }, '*');
               });
             });
             
-            // Add a click handler to intercept links and redirect
+            // Handle link clicks
             document.addEventListener('click', (e) => {
               let target = e.target;
               while (target && target.tagName !== 'A') {
                 target = target.parentElement;
               }
-              if (target && target.href) {
+              if (target && target.href && !target.href.startsWith('javascript:')) {
                 e.preventDefault();
-                window.parent.postMessage({ type: 'navigate', url: target.href }, '*');
+                const actualUrl = target.getAttribute('data-original-href') || new URL(target.href, window.PROXY_BASE_URL).href;
+                window.parent.postMessage({ type: 'navigate', url: actualUrl }, '*');
               }
             });
+
+            // Handle window.open and location changes
+            const originalWindowOpen = window.open;
+            window.open = function(url, ...args) {
+              if (url && typeof url === 'string') {
+                const resolvedUrl = new URL(url, window.PROXY_BASE_URL).href;
+                window.parent.postMessage({ type: 'navigate', url: resolvedUrl }, '*');
+                return null;
+              }
+              return originalWindowOpen.call(this, url, ...args);
+            };
+
+            // Handle meta refresh
+            const metaRefresh = document.querySelector('meta[http-equiv="refresh"]');
+            if (metaRefresh) {
+              const content = metaRefresh.getAttribute('content');
+              const match = content.match(/\\d+;\\s*url=(.+)/i);
+              if (match) {
+                const refreshUrl = new URL(match[1], window.PROXY_BASE_URL).href;
+                setTimeout(() => {
+                  window.parent.postMessage({ type: 'navigate', url: refreshUrl }, '*');
+                }, parseInt(content) * 1000);
+              }
+            }
           `;
           doc.body.appendChild(newScript);
 
@@ -561,7 +805,7 @@
           iframe.onload = () => {
             tab.iframeContainer.classList.remove('loading');
             loadingIndicator.style.display = 'none';
-            updateTabTitle(tab, iframe.contentDocument.title || originalUrl);
+            updateTabTitle(tab, iframe.contentDocument?.title || originalUrl);
             hideOverlay();
           };
 
@@ -572,22 +816,34 @@
 
         } catch (error) {
           console.error('Fetch error:', error);
-          displayError(tab, 'Error fetching content. It might be due to CORS or AllOrigins limitations.');
+          displayError(tab, 'Failed to fetch content through proxy services.');
           hideOverlay();
         }
       }
 
-      // Function to rewrite URLs in the DOM document
-      function rewriteUrls(doc, baseUrl) {
+      // Comprehensive recursive URL rewriting function
+      async function rewriteUrls(doc, baseUrl) {
         const base = new URL(baseUrl);
+
+        // Function to get proxied URL using centralized proxy manager
+        const getProxiedUrl = (url) => {
+          if (proxyManager.isAlreadyProxied(url)) {
+            return url; // Don't double-proxy
+          }
+          return proxyManager.getProxiedUrl(url, baseUrl);
+        };
 
         // Function to rewrite a single attribute
         const rewriteAttribute = (element, attr) => {
           const originalUrl = element.getAttribute(attr);
-          if (originalUrl && !originalUrl.startsWith('data:') && !originalUrl.startsWith('#')) {
+          if (originalUrl && !originalUrl.startsWith('data:') && !originalUrl.startsWith('#') && !originalUrl.startsWith('javascript:') && !originalUrl.startsWith('mailto:')) {
             try {
               const absoluteUrl = new URL(originalUrl, base).href;
-              element.setAttribute(attr, `https://api.allorigins.win/raw?url=${encodeURIComponent(absoluteUrl)}`);
+              // Store original URL for link handling
+              if (element.tagName === 'A') {
+                element.setAttribute('data-original-href', absoluteUrl);
+              }
+              element.setAttribute(attr, getProxiedUrl(originalUrl));
             } catch (e) {
               console.warn(`Could not rewrite URL for ${element.tagName} with attribute ${attr}: ${e}`);
             }
@@ -597,13 +853,18 @@
         // Rewrite all common URL attributes
         doc.querySelectorAll('[src]').forEach(el => rewriteAttribute(el, 'src'));
         doc.querySelectorAll('[href]').forEach(el => rewriteAttribute(el, 'href'));
+        doc.querySelectorAll('[action]').forEach(el => rewriteAttribute(el, 'action'));
+        doc.querySelectorAll('[poster]').forEach(el => rewriteAttribute(el, 'poster'));
+        doc.querySelectorAll('[data]').forEach(el => rewriteAttribute(el, 'data'));
+
+        // Handle srcset attributes
         doc.querySelectorAll('[srcset]').forEach(el => {
           const newSrcset = el.srcset.split(',').map(part => {
             const [url, size] = part.trim().split(/\s+/);
-            if (url) {
+            if (url && !url.startsWith('data:')) {
               try {
                 const absoluteUrl = new URL(url, base).href;
-                return `https://api.allorigins.win/raw?url=${encodeURIComponent(absoluteUrl)} ${size}`;
+                return `${getProxiedUrl(url)} ${size || ''}`.trim();
               } catch (e) {
                 console.warn(`Could not rewrite URL in srcset: ${e}`);
                 return part;
@@ -612,6 +873,111 @@
             return part;
           }).join(', ');
           el.srcset = newSrcset;
+        });
+
+        // Handle background images in CSS
+        const rewriteCssUrls = (cssText, baseUrl) => {
+          return cssText.replace(/url\s*\(\s*['"]?([^'")]+)['"]?\s*\)/gi, (match, url) => {
+            if (url.startsWith('data:') || url.startsWith('#')) {
+              return match;
+            }
+            try {
+              const absoluteUrl = new URL(url, baseUrl).href;
+              return `url("${getProxiedUrl(url)}")`;
+            } catch (e) {
+              console.warn(`Could not rewrite CSS URL: ${url}`, e);
+              return match;
+            }
+          }).replace(/@import\s+['"]([^'"]+)['"]/gi, (match, url) => {
+            if (url.startsWith('data:') || url.startsWith('#')) {
+              return match;
+            }
+            try {
+              return `@import "${getProxiedUrl(url)}"`;
+            } catch (e) {
+              console.warn(`Could not rewrite CSS import: ${url}`, e);
+              return match;
+            }
+          });
+        };
+
+        // Rewrite CSS inline styles
+        doc.querySelectorAll('[style]').forEach(el => {
+          const style = el.getAttribute('style');
+          if (style) {
+            const rewrittenStyle = rewriteCssUrls(style, base);
+            el.setAttribute('style', rewrittenStyle);
+          }
+        });
+
+        // Rewrite CSS in style tags
+        doc.querySelectorAll('style').forEach(async (styleEl) => {
+          const cssContent = styleEl.textContent;
+          if (cssContent) {
+            const rewrittenCss = rewriteCssUrls(cssContent, base);
+            styleEl.textContent = rewrittenCss;
+          }
+        });
+
+        // Process external stylesheets recursively
+        const linkElements = doc.querySelectorAll('link[rel="stylesheet"]');
+        for (const linkEl of linkElements) {
+          const href = linkEl.getAttribute('href');
+          if (href && !href.startsWith('data:')) {
+            try {
+              const cssUrl = new URL(href, base).href;
+              
+              // Fetch CSS through proxy
+              const response = await proxyManager.fetchThroughProxy(cssUrl);
+              const cssContent = await response.text();
+              
+              // Recursively rewrite URLs in CSS content
+              const rewrittenCss = rewriteCssUrls(cssContent, new URL(cssUrl));
+              
+              // Replace link with inline style to avoid double-proxying
+              const styleEl = doc.createElement('style');
+              styleEl.textContent = rewrittenCss;
+              styleEl.setAttribute('data-original-href', cssUrl);
+              linkEl.parentNode.replaceChild(styleEl, linkEl);
+              
+            } catch (error) {
+              console.warn(`Failed to fetch and process CSS: ${href}`, error);
+              // Leave original link element as fallback
+            }
+          }
+        };
+
+        // Rewrite URLs in script tags (for dynamic content)
+        doc.querySelectorAll('script').forEach(scriptEl => {
+          const scriptContent = scriptEl.textContent;
+          if (scriptContent) {
+            // Basic URL rewriting in JavaScript strings (limited)
+            const rewrittenScript = scriptContent.replace(
+              /(["'])(https?:\/\/[^"']+)\1/g,
+              (match, quote, url) => {
+                try {
+                  return quote + getProxiedUrl(url) + quote;
+                } catch (e) {
+                  return match;
+                }
+              }
+            );
+            scriptEl.textContent = rewrittenScript;
+          }
+        });
+
+        // Handle meta tags with URLs
+        doc.querySelectorAll('meta[content]').forEach(meta => {
+          const content = meta.getAttribute('content');
+          const property = meta.getAttribute('property') || meta.getAttribute('name');
+          
+          if (property && (property.includes('image') || property.includes('url')) && content && content.startsWith('http')) {
+            try {
+              meta.setAttribute('content', getProxiedUrl(content));
+            } catch (e) {
+              console.warn(`Could not rewrite meta content URL: ${e}`);
+            }
+          }
         });
       }
 
@@ -672,10 +1038,16 @@
         }
       }
       
-      // Handle messages from iframes to navigate
+      // Handle messages from iframes to navigate and form submissions
       window.addEventListener('message', (event) => {
-        if (event.data.type === 'navigate' && activeTabIndex !== -1) {
+        if (activeTabIndex === -1) return;
+        
+        if (event.data.type === 'navigate') {
           loadUrlInTab(tabs[activeTabIndex], event.data.url);
+        } else if (event.data.type === 'form_submit') {
+          // Handle POST form submissions (limited support)
+          console.warn('POST form submission detected:', event.data);
+          displayError(tabs[activeTabIndex], `POST forms are not fully supported. Form action: ${event.data.url}`);
         }
       }, false);
 
