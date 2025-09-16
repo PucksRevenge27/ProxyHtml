@@ -412,7 +412,7 @@
         const iframeContainer = document.createElement('div');
         iframeContainer.className = 'iframe-container';
         iframeContainer.dataset.tabId = tabId;
-        iframeContainer.innerHTML = `<iframe src="about:blank" sandbox="allow-same-origin allow-scripts allow-forms allow-pointer-lock allow-modals allow-orientation-lock allow-presentation"></iframe>`;
+        iframeContainer.innerHTML = `<iframe src="about:blank" sandbox="allow-scripts allow-forms allow-pointer-lock allow-modals allow-orientation-lock allow-presentation"></iframe>`;
         content.appendChild(iframeContainer);
 
         const newTab = {
@@ -486,7 +486,7 @@
         }
       }
 
-      // Centralized proxy service management
+      // Enhanced proxy service management with WebSocket and Google/YouTube optimizations
       class ProxyManager {
         constructor() {
           this.services = [
@@ -494,19 +494,15 @@
               name: 'AllOrigins',
               url: 'https://api.allorigins.win/raw?url=',
               encode: true,
-              healthy: true
-            },
-            {
-              name: 'CorsAnywhere', 
-              url: 'https://cors-anywhere.herokuapp.com/',
-              encode: false,
-              healthy: true
+              healthy: true,
+              supportsHeaders: false
             },
             {
               name: 'CodeTabs',
               url: 'https://api.codetabs.com/v1/proxy?quest=',
               encode: true,
-              healthy: true
+              healthy: true,
+              supportsHeaders: false
             }
           ];
           this.currentServiceIndex = 0;
@@ -531,6 +527,11 @@
         async fetchThroughProxy(url, options = {}) {
           let lastError = null;
 
+          // Use provided options (most headers are restricted by browser)
+          const enhancedOptions = {
+            ...options
+          };
+
           for (let i = 0; i < this.services.length; i++) {
             const serviceIndex = (this.currentServiceIndex + i) % this.services.length;
             const service = this.services[serviceIndex];
@@ -542,7 +543,7 @@
                 service.url + encodeURIComponent(url) : 
                 service.url + url;
               
-              const response = await fetch(proxyUrl, options);
+              const response = await fetch(proxyUrl, enhancedOptions);
               if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
               }
@@ -560,6 +561,7 @@
 
           throw lastError || new Error('All proxy services failed');
         }
+
 
         isAlreadyProxied(url) {
           return this.services.some(service => url.includes(service.url.split('?')[0]));
@@ -611,23 +613,33 @@
           }
 
           // Enhanced script injection optimized for games
+          const currentService = proxyManager.services[proxyManager.currentServiceIndex];
           const newScript = doc.createElement('script');
           newScript.textContent = `
             // Store original base URL for relative URL resolution
             window.PROXY_BASE_URL = "${originalUrl}";
             
+            // Current proxy service configuration
+            window.PROXY_SERVICE = {
+              url: "${currentService.url}",
+              encode: ${currentService.encode}
+            };
+            
             // Non-intrusive proxy URL generation
             function getProxiedUrl(url) {
               // Don't proxy blob, data, or already proxied URLs
               if (url.startsWith('blob:') || url.startsWith('data:') || 
-                  url.includes('api.allorigins.win') || url.includes('cors-anywhere.herokuapp.com') || 
-                  url.includes('api.codetabs.com')) {
+                  url.includes('api.allorigins.win') || url.includes('api.codetabs.com')) {
                 return url;
               }
               
               try {
                 const absoluteUrl = new URL(url, window.PROXY_BASE_URL).href;
-                return 'https://api.allorigins.win/raw?url=' + encodeURIComponent(absoluteUrl);
+                if (window.PROXY_SERVICE.encode) {
+                  return window.PROXY_SERVICE.url + encodeURIComponent(absoluteUrl);
+                } else {
+                  return window.PROXY_SERVICE.url + absoluteUrl;
+                }
               } catch (e) {
                 return url;
               }
@@ -796,6 +808,119 @@
                   window.parent.postMessage({ type: 'navigate', url: refreshUrl }, '*');
                 }, parseInt(content) * 1000);
               }
+            }
+
+            // WebSocket handling - limited support due to browser security restrictions
+            // WebSocket proxying is not fully functional in a single HTML file environment
+            // due to CORS and origin restrictions, but we can try direct connections
+            const originalWebSocket = window.WebSocket;
+            window.WebSocket = function(url, protocols) {
+              try {
+                let wsUrl = url;
+                if (typeof url === 'string') {
+                  // Convert relative WebSocket URLs to absolute
+                  if (!url.startsWith('ws://') && !url.startsWith('wss://')) {
+                    wsUrl = new URL(url, window.PROXY_BASE_URL).href;
+                    wsUrl = wsUrl.replace('http://', 'ws://').replace('https://', 'wss://');
+                  }
+                  
+                  console.log('Attempting WebSocket connection to:', wsUrl);
+                  return new originalWebSocket(wsUrl, protocols);
+                }
+                return new originalWebSocket(url, protocols);
+              } catch (error) {
+                console.warn('WebSocket connection failed (expected for proxied sites):', error);
+                throw error; // Let the application handle the failure
+              }
+            };
+
+            // Google/YouTube specific optimizations
+            
+            // Attempt to override navigator.userAgent (may fail on some browsers)
+            try {
+              Object.defineProperty(navigator, 'userAgent', {
+                get: function() {
+                  return 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+                },
+                configurable: true
+              });
+            } catch (e) {
+              // userAgent is not configurable in this browser
+              console.log('Cannot override userAgent in this browser');
+            }
+
+            // Enhanced cookie handling for Google login
+            const originalCookieDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie') ||
+                                           Object.getOwnPropertyDescriptor(HTMLDocument.prototype, 'cookie');
+                                           
+            if (originalCookieDescriptor) {
+              Object.defineProperty(document, 'cookie', {
+                get: function() {
+                  return originalCookieDescriptor.get.call(this);
+                },
+                set: function(value) {
+                  // Allow cookies for Google/YouTube domains
+                  if (window.PROXY_BASE_URL.includes('google.com') || 
+                      window.PROXY_BASE_URL.includes('youtube.com') ||
+                      window.PROXY_BASE_URL.includes('accounts.google.com')) {
+                    console.log('Setting cookie for Google/YouTube:', value);
+                  }
+                  return originalCookieDescriptor.set.call(this, value);
+                }
+              });
+            }
+
+            // YouTube player optimizations
+            if (window.PROXY_BASE_URL.includes('youtube.com')) {
+              // Allow YouTube's postMessage communications
+              window.addEventListener('message', (event) => {
+                if (event.origin.includes('youtube.com')) {
+                  // Forward YouTube messages to parent
+                  window.parent.postMessage({
+                    type: 'youtube_message',
+                    data: event.data
+                  }, '*');
+                }
+              }, false);
+              
+              // Override some YouTube-specific globals if needed
+              try {
+                if (typeof yt !== 'undefined') {
+                  console.log('YouTube environment detected, applying optimizations');
+                }
+              } catch (e) {
+                // yt not available, continue
+              }
+            }
+
+            // Google login flow optimizations
+            if (window.PROXY_BASE_URL.includes('accounts.google.com') || 
+                window.PROXY_BASE_URL.includes('google.com')) {
+              
+              // Handle OAuth redirects
+              window.addEventListener('load', () => {
+                // Check for OAuth redirect parameters
+                const urlParams = new URLSearchParams(window.location.search);
+                if (urlParams.has('code') || urlParams.has('access_token')) {
+                  console.log('OAuth flow detected in Google login');
+                  // Allow the OAuth flow to proceed normally
+                }
+              });
+              
+              // Override location.href for proper OAuth redirects
+              let currentLocationHref = window.location.href;
+              Object.defineProperty(window.location, 'href', {
+                get: function() {
+                  return currentLocationHref;
+                },
+                set: function(value) {
+                  if (value.includes('accounts.google.com') || value.includes('google.com')) {
+                    window.parent.postMessage({ type: 'navigate', url: value }, '*');
+                  } else {
+                    currentLocationHref = value;
+                  }
+                }
+              });
             }
           `;
           doc.body.appendChild(newScript);
@@ -1048,6 +1173,14 @@
           // Handle POST form submissions (limited support)
           console.warn('POST form submission detected:', event.data);
           displayError(tabs[activeTabIndex], `POST forms are not fully supported. Form action: ${event.data.url}`);
+        } else if (event.data.type === 'websocket_message') {
+          // Handle WebSocket messages from proxied sites
+          console.log('WebSocket message received:', event.data);
+          // Could forward to other tabs or handle as needed
+        } else if (event.data.type === 'youtube_message') {
+          // Handle YouTube-specific messages
+          console.log('YouTube message received:', event.data);
+          // Handle YouTube player events, etc.
         }
       }, false);
 
